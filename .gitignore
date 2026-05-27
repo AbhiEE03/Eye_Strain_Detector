@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+*.egg
+*.egg-info/
+.eggs/
+
+# Virtual Environment
+venv/
+.venv/
+env/
+.env/
+
+# PyInstaller build artifacts
+build/
+dist/
+*.spec.bak
+
+# MediaPipe model file (auto-downloaded at runtime)
+face_landmarker.task
+
+# IDE / OS
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+
+# Logs
+*.log
