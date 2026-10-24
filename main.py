@@ -18,6 +18,8 @@ import time
 import numpy as np
 import cv2
 import os
+import sys
+from blink_rate import BlinkRateMonitor
 os.environ["GLOG_minloglevel"] = "3"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
@@ -34,6 +36,18 @@ COL_YELLOW = (0,   220, 220)
 COL_RED = (30,   30, 220)
 COL_WHITE = (240, 240, 240)
 COL_DARK = (20,   20,  20)
+COL_ORANGE = (0,  140, 255)
+FPS_WINDOW_SEC = 1.0
+MODEL_FILE = "face_landmarker.task"
+MODEL_URL = ("https://storage.googleapis.com/mediapipe-models/face_landmarker/"
+             "face_landmarker/float16/1/face_landmarker.task")
+
+
+def _model_path():
+    # Frozen exe: PyInstaller unpacks bundled data into sys._MEIPASS.
+    # From source: the model sits next to main.py (not the current working directory).
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, MODEL_FILE)
 
 
 def _dist(a, b):
@@ -73,8 +87,12 @@ class EyeStrainDetector:
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         self.cap.set(cv2.CAP_PROP_FPS, 30)
+        # cap.set() is only a request; report what the driver actually gave us.
+        print(f"[INFO] Camera reports {self.cap.get(cv2.CAP_PROP_FRAME_WIDTH):.0f}x"
+              f"{self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT):.0f} @ {self.cap.get(cv2.CAP_PROP_FPS):.1f} FPS")
 
         self.blink_count = 0
+        self.blink_monitor = BlinkRateMonitor(start_time=time.perf_counter())
         self.consec_below = 0
         self.ear_history = deque(maxlen=90)
         self.ear_threshold = 0.21
@@ -82,20 +100,21 @@ class EyeStrainDetector:
         self.calibrating = False
         self.calib_samples = []
         self.calib_start_time = 0.0
-        self.fps_counter = deque(maxlen=30)
+        self.loop_times = deque()   # start time of each full loop in the last FPS_WINDOW_SEC
 
     def _init_tasks_api(self):
         import urllib.request
         import os
-        model_path = "face_landmarker.task"
+        model_path = _model_path()
         if not os.path.exists(model_path):
-            print("[INFO] Downloading face_landmarker model (~6 MB) ...")
-            urllib.request.urlretrieve(
-                "https://storage.googleapis.com/mediapipe-models/face_landmarker/"
-                "face_landmarker/float16/1/face_landmarker.task",
-                model_path,
-            )
+            if getattr(sys, "frozen", False):
+                raise FileNotFoundError(
+                    f"Bundled model missing: {model_path}. Rebuild with 'pyinstaller main.spec'.")
+            # Source checkouts only: the model is gitignored, so fetch it once.
+            print(f"[WARN] {model_path} not found - downloading it once (needs internet) ...")
+            urllib.request.urlretrieve(MODEL_URL, model_path)
             print("[INFO] Download complete.")
+        print(f"[INFO] Model: {model_path}")
         base_opts = mp_python.BaseOptions(model_asset_path=model_path)
         opts = FaceLandmarkerOptions(
             base_options=base_opts,
@@ -144,10 +163,10 @@ class EyeStrainDetector:
         rx = lm[FACE_W_LANDMARKS[1]].x * fw
         return "TOO CLOSE" if abs(rx - lx) / fw > DIST_THRESHOLD else "OK"
 
-    def draw_hud(self, frame, avg_ear, prox, fps):
+    def draw_hud(self, frame, avg_ear, prox, fps, bpm, low_blink):
         h, w = frame.shape[:2]
         ov = frame.copy()
-        cv2.rectangle(ov, (0, 0), (320, 160), COL_DARK, -1)
+        cv2.rectangle(ov, (0, 0), (320, 170), COL_DARK, -1)
         cv2.addWeighted(ov, 0.55, frame, 0.45, 0, frame)
         f, fb = cv2.FONT_HERSHEY_SIMPLEX, cv2.FONT_HERSHEY_DUPLEX
         cv2.putText(frame, "EYE STRAIN DETECTOR", (10, 22),
@@ -162,6 +181,9 @@ class EyeStrainDetector:
                     (10, 102), f, 0.55, pcol, 1, cv2.LINE_AA)
         cv2.putText(frame, f"FPS    : {fps:.1f}",
                     (10, 127), f, 0.48, COL_YELLOW, 1, cv2.LINE_AA)
+        bpm_txt = "warming up (60s)" if bpm is None else f"{bpm:.0f}"
+        cv2.putText(frame, f"Blinks/min : {bpm_txt}",
+                    (10, 152), f, 0.50, COL_ORANGE if low_blink else COL_WHITE, 1, cv2.LINE_AA)
         if self.calibrating:
             rem = max(0, CALIB_DURATION_SEC -
                       (time.time() - self.calib_start_time))
@@ -173,6 +195,12 @@ class EyeStrainDetector:
             cv2.rectangle(frame, (0, h - 45), (w, h), (0, 0, 180), -1)
             cv2.putText(frame, "  MOVE BACK FROM SCREEN  ", (w //
                         2 - 195, h - 15), fb, 0.75, COL_WHITE, 2, cv2.LINE_AA)
+        if low_blink:
+            msg = "LOW BLINK RATE - TAKE A BREAK"
+            (tw, _), _ = cv2.getTextSize(msg, fb, 0.7, 2)
+            cv2.rectangle(frame, (0, h - 95), (w, h - 50), COL_ORANGE, -1)
+            cv2.putText(frame, msg, ((w - tw) // 2, h - 63),
+                        fb, 0.7, COL_DARK, 2, cv2.LINE_AA)
         if len(self.ear_history) > 1:
             pts = list(self.ear_history)
             mn, mx = min(pts), max(pts)
@@ -200,12 +228,18 @@ class EyeStrainDetector:
         cv2.namedWindow("Digital Eye Strain Detection System",
                         cv2.WINDOW_NORMAL)
         idx = 0
+        self.blink_monitor.start_time = time.perf_counter()
         try:
             while True:
-                t0 = time.perf_counter()
                 ret, frame = self.cap.read()
                 if not ret:
                     continue
+                # FPS = full loops (capture -> process -> draw -> display) completed
+                # in the last FPS_WINDOW_SEC, measured start-to-start.
+                now = time.perf_counter()
+                self.loop_times.append(now)
+                while now - self.loop_times[0] > FPS_WINDOW_SEC:
+                    self.loop_times.popleft()
                 frame = cv2.flip(frame, 1)
                 h, w = frame.shape[:2]
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -226,11 +260,15 @@ class EyeStrainDetector:
                         else:
                             if self.consec_below >= EAR_CONSEC_FRAMES:
                                 self.blink_count += 1
+                                self.blink_monitor.add_blink(now)
                             self.consec_below = 0
-                self.fps_counter.append(time.perf_counter() - t0)
-                fps = 1.0 / (sum(self.fps_counter) /
-                             len(self.fps_counter) + 1e-9)
-                self.draw_hud(frame, avg_ear, prox, fps)
+                # No alert while calibrating or with no face (e.g. user stepped away).
+                low_blink = self.blink_monitor.update(
+                    now, paused=self.calibrating or not lm)
+                bpm = None if self.blink_monitor.warming_up(now) else self.blink_monitor.rate(now)
+                span = now - self.loop_times[0]
+                fps = (len(self.loop_times) - 1) / span if span > 0 else 0.0
+                self.draw_hud(frame, avg_ear, prox, fps, bpm, low_blink)
                 cv2.imshow("Digital Eye Strain Detection System", frame)
                 key = cv2.waitKey(1) & 0xFF
                 if key == 27:
