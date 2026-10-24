@@ -1,6 +1,6 @@
 # Eye Strain Detection System
 
-A real-time desktop app that watches for eye-strain indicators through your webcam. It counts blinks, tracks your blink rate, warns when that rate stays low, and warns when you sit too close to the screen. It runs locally with Python, OpenCV and MediaPipe's Face Landmarker (478 landmarks: 468 face-mesh points + 10 iris points).
+A real-time desktop app that watches for eye-strain indicators through your webcam. It counts blinks, tracks your blink rate, warns when that rate stays low, and warns when you sit too close to the screen. It runs locally with Python, OpenCV and MediaPipe's Face Landmarker (478 landmarks: 468 face-mesh points + 10 iris points), and the Windows exe works fully offline.
 
 **GitHub:** [Eye_Strain_Detector](https://github.com/AbhiEE03/Eye_Strain_Detector) · **Demo video:** [Google Drive](https://drive.google.com/file/d/10Yf9vRVdlOZmBLfGuulfcUSph2n3WeCb/view?usp=sharing)
 
@@ -23,7 +23,7 @@ A single low-EAR frame might be noise, so it isn't counted. A blink is counted o
 
 ### Personal calibration (70% of baseline)
 
-Press **`C`** and keep your eyes open normally for 3 seconds. The app averages your open-eye EAR and sets the blink threshold to **70% of that baseline**. Before calibration the default threshold is 0.21. Calibration adapts to individual eye shape. It does not compensate for head pose, glasses glare or poor lighting.
+Press **`C`** and keep your eyes open normally for 3 seconds. The app averages your open-eye EAR and sets the blink threshold to **70% of that baseline**. Until you calibrate, the threshold is the default **0.210** (shown on the HUD as `thr 0.210`). The console prints `[CALIB] Baseline=… Threshold=…` when calibration finishes. Calibration adapts to individual eye shape. It does not compensate for head pose, glasses glare or poor lighting.
 
 ### Blink rate and low-blink alert
 
@@ -50,11 +50,14 @@ From my own testing on an AMD Ryzen 5 5600H laptop. Numbers will differ on other
 | What | Result |
 | --- | --- |
 | Camera (read back with `cap.get`) | 640×480 @ 30 FPS |
-| Full-loop FPS (capture → process → draw → display), face in frame | ~30 (HUD showed 29.7–30.8), limited by the camera |
-| Natural blinking, two 2-minute sessions vs. a person counting | 9 vs 9 and 6 vs 6 |
+| Full-loop FPS (capture → process → draw → display), face in frame | ~30 (HUD showed 29.3–31.6), limited by the camera |
+| Eye Aspect Ratio on the HUD | ~0.30–0.34 eyes open, ~0.07 eyes closed (shown in red) |
+| Calibration (press `C`) | Threshold moved from the 0.210 default to 0.207 and 0.201 in separate runs |
+| Natural blinking, 2-minute sessions vs. a person counting | Counts matched (9 vs 9, 6 vs 6) |
 | Deliberate fast blinking | 62 blinks/min counted |
 | Low-blink banner | Appears as designed (tested with the threshold temporarily raised to 30/min) |
 | Exe startup (launch → window shown, one-file exe, empty folder) | ~7.5 s typical (6.6–10.6 s over 6 runs) |
+| Exe offline | Works with Wi-Fi off, run from an empty folder |
 
 The blink checks are a small manual sanity test with one person, not a formal accuracy evaluation.
 
@@ -99,10 +102,10 @@ To measure FPS on your own machine, run `tools/measure_live.py`. It is a dev-onl
 
 ## Implementation notes
 
-- **MediaPipe API change.** `mp.solutions` (legacy FaceMesh) is gone in recent MediaPipe releases. The app uses legacy FaceMesh if it exists, otherwise the Tasks `FaceLandmarker` in VIDEO mode. Tested on MediaPipe 0.10.35, which uses the Tasks path.
+- **MediaPipe API change.** `mp.solutions` (legacy FaceMesh) is gone in recent MediaPipe releases. The app uses legacy FaceMesh if it exists, otherwise the Tasks `FaceLandmarker` in VIDEO mode. `requirements.txt` asks for `mediapipe>=0.10.30`; tested on 0.10.35, which uses the Tasks path.
 - **Windows startup.** OpenCV's Media Foundation backend can stall for several seconds while it sets up hardware transforms when the webcam opens. `main.py` sets `OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS=0` before importing `cv2`.
 - **Honest FPS.** The HUD's FPS is the number of full loops in the last second (start-to-start), so drawing and display time are included.
-- **Privacy.** Frames are processed in memory and never saved or uploaded. MediaPipe itself may try to send usage telemetry. The app's own code makes no network requests except the one-time model download in a source checkout.
+- **Offline and privacy.** Frames are processed in memory and never saved or uploaded. The exe bundles the model and works fully offline (verified with Wi-Fi off). MediaPipe itself may still try to send usage telemetry; offline, that fails silently. The app's own code makes no network requests except the one-time model download in a source checkout.
 
 ---
 
