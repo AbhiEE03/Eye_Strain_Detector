@@ -1,151 +1,127 @@
-# Eye Strain Detection System — Real-Time Computer Vision Desktop App
+# Eye Strain Detection System
 
-A real-time desktop application that monitors eye strain using your webcam — detecting blink rate, eye closure patterns, and screen proximity using MediaPipe's 468-point facial landmark model.
+A real-time desktop app that watches for eye-strain indicators through your webcam. It counts blinks, tracks your blink rate, warns when that rate stays low, and warns when you sit too close to the screen. It runs locally with Python, OpenCV and MediaPipe's Face Landmarker (478 landmarks: 468 face-mesh points + 10 iris points), and the Windows exe works fully offline.
 
-🔗 **GitHub:** [Eye_Strain_Detector](https://github.com/AbhiEE03/Eye_Strain_Detector)
-
-> Built in a single day, learning MediaPipe from scratch. Tested across multiple systems — consistent accuracy.
+**GitHub:** [Eye_Strain_Detector](https://github.com/AbhiEE03/Eye_Strain_Detector) · **Demo video:** [Google Drive](https://drive.google.com/file/d/10Yf9vRVdlOZmBLfGuulfcUSph2n3WeCb/view?usp=sharing)
 
 ---
 
-## The Problem
+## Features
 
-Most developers stare at screens for hours without blinking normally. No tool existed that could run locally, adapt to your personal eye baseline, and alert you in real time — without requiring any setup.
-
----
-
-## Key Features
-
-### Real-Time EAR (Eye Aspect Ratio) Detection
+### Blink detection with the Eye Aspect Ratio (EAR)
 
 ```
-EAR = (||p2−p6|| + ||p3−p5||) / (2 × ||p1−p4||)
+EAR = (||p2 − p6|| + ||p3 − p5||) / (2 × ||p1 − p4||)
 ```
 
-- Uses 6 MediaPipe landmarks per eye
-- Left eye: `[33, 160, 158, 133, 153, 144]`
-- Right eye: `[362, 385, 387, 263, 373, 380]`
-- Both eyes averaged for final EAR value
-- Runs at **~40 FPS** on standard hardware
+- 6 landmarks per eye. Left: `[33, 160, 158, 133, 153, 144]`, right: `[362, 385, 387, 263, 373, 380]`
+- The EAR of both eyes is averaged every frame.
 
-### Dynamic Personal Calibration
+### 3-frame state machine
 
-Fixed thresholds don't generalize — everyone's eyes open differently.
+A single low-EAR frame might be noise, so it isn't counted. A blink is counted only when EAR stays below the threshold for **3 or more consecutive frames** and then rises above it again. At 30 FPS that is a closure of at least ~100 ms.
 
-**Press `C`** → hold eyes open for 3 seconds → system records your personal open-eye baseline → sets detection threshold at **70% of your baseline**.
+### Personal calibration (70% of baseline)
 
-One interaction. Eliminates false positives entirely.
+Press **`C`** and keep your eyes open normally for 3 seconds. The app averages your open-eye EAR and sets the blink threshold to **70% of that baseline**. Until you calibrate, the threshold is the default **0.210** (shown on the HUD as `thr 0.210`). The console prints `[CALIB] Baseline=… Threshold=…` when calibration finishes. Calibration adapts to individual eye shape. It does not compensate for head pose, glasses glare or poor lighting.
 
-### 3-Frame Consecutive State Machine
+### Blink rate and low-blink alert
 
-A single low-EAR frame isn't a blink — it could be a lighting change or head tilt.
+- The blink rate is counted over a **rolling 60-second window** and shown on the HUD.
+- If it stays below **10 blinks/min for 2 minutes**, a "LOW BLINK RATE - TAKE A BREAK" banner appears.
+- The alert is paused for the first 60 s, during calibration and whenever no face is visible.
+- 10/min is a configurable heuristic (normal is often quoted as ~15–20/min). It is **not a medical standard**.
+- The logic lives in [`blink_rate.py`](blink_rate.py) and is unit-tested.
 
-A blink is only registered when EAR stays below threshold for **3+ consecutive frames**. This filters noise without missing real blinks.
+### Proximity alert
 
-### Screen Proximity Alert
+When face width (landmarks 234 → 454) exceeds 28% of the frame width, a "MOVE BACK FROM SCREEN" banner appears. This is a relative heuristic, not a calibrated distance in cm.
 
-Estimates face-to-screen distance using face width relative to frame width. Triggers a **"TOO CLOSE"** banner when you sit dangerously close.
+### HUD
 
-### Live EAR Sparkline
-
-A real-time mini graph of your eye openness history, rendered directly on the HUD.
+Blink count, EAR and threshold, distance status, FPS, blinks/min, and a live EAR sparkline with the threshold line.
 
 ---
 
-## Tech Stack
+## Measured results
 
-| Tool        | Purpose                             |
-| ----------- | ----------------------------------- |
-| Python 3.13 | Core language                       |
-| OpenCV      | Webcam capture & HUD rendering      |
-| MediaPipe   | 468-point facial landmark detection |
-| NumPy       | EAR mathematical computations       |
-| PyInstaller | Packaging into standalone .exe      |
+From my own testing on an AMD Ryzen 5 5600H laptop. Numbers will differ on other hardware.
 
-**Performance:** ~40 FPS · <15% CPU · 6MB MediaPipe model
+| What | Result |
+| --- | --- |
+| Camera (read back with `cap.get`) | 640×480 @ 30 FPS |
+| Full-loop FPS (capture → process → draw → display), face in frame | ~30 (HUD showed 29.3–31.6), limited by the camera |
+| Eye Aspect Ratio on the HUD | ~0.30–0.34 eyes open, ~0.07 eyes closed (shown in red) |
+| Calibration (press `C`) | Threshold moved from the 0.210 default to 0.207 and 0.201 in separate runs |
+| Natural blinking, 2-minute sessions vs. a person counting | Counts matched (9 vs 9, 6 vs 6) |
+| Deliberate fast blinking | 62 blinks/min counted |
+| Low-blink banner | Appears as designed (tested with the threshold temporarily raised to 30/min) |
+| Exe startup (launch → window shown, one-file exe, empty folder) | ~7.5 s typical (6.6–10.6 s over 6 runs) |
+| Exe offline | Works with Wi-Fi off, run from an empty folder |
 
----
-
-## Engineering Challenges Solved
-
-### 1. MediaPipe 0.10.30+ Breaking Change
-
-MediaPipe removed the entire `mp.solutions` interface in v0.10.30+. Most tutorials online are now broken.
-
-**Solution:** `try/except` version fallback — auto-detects the API version and switches to the Tasks API automatically. Works on any MediaPipe version.
-
-```python
-try:
-    # Legacy API
-    import mediapipe as mp
-    face_mesh = mp.solutions.face_mesh.FaceMesh(...)
-except AttributeError:
-    # Tasks API (v0.10.30+)
-    from mediapipe.tasks.python import vision
-    ...
-```
-
-### 2. PyInstaller + MediaPipe Packaging
-
-MediaPipe's C extensions are not auto-detected by PyInstaller.
-
-**Solution:**
-
-```bash
-pyinstaller --collect-all mediapipe main.py
-```
-
-### 3. Cross-System Accuracy
-
-Tested across multiple machines with different lighting conditions, webcam qualities, and face structures. Dynamic calibration ensures consistent accuracy regardless of setup.
+The blink checks are a small manual sanity test with one person, not a formal accuracy evaluation.
 
 ---
 
-## Running the App
+## Run it
 
-### Option 1: Standalone .exe (No Python Required)
-
-1. Download the latest release
-2. Extract the zip
-3. Run `main.exe`
-
-### Option 2: From Source
+### From source
 
 ```bash
 git clone https://github.com/AbhiEE03/Eye_Strain_Detector.git
 cd Eye_Strain_Detector
-pip install opencv-python mediapipe numpy
+pip install -r requirements.txt
 python main.py
 ```
 
-**Controls:**
+The model file `face_landmarker.task` (3.6 MB) isn't committed. A source run downloads it once from Google's MediaPipe model storage and saves it next to `main.py`.
 
-- `C` — Calibrate to your personal baseline
-- `ESC` — Exit (camera always released cleanly via try/finally)
+**Controls:** `C` calibrate · `ESC` quit. The camera is always released (`try/finally`).
+
+### Build the standalone exe (Windows)
+
+```bash
+pip install pyinstaller
+python main.py                       # once, so face_landmarker.task exists locally
+python -m PyInstaller main.spec
+```
+
+This produces `dist/main.exe`, a one-file build. [`main.spec`](main.spec) collects MediaPipe's native files (`collect_all('mediapipe')`) and bundles `face_landmarker.task`. At runtime the exe reads the model from PyInstaller's unpack folder (`sys._MEIPASS`), so it runs from any folder and never downloads the model.
+
+### Tests
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+The tests cover the rolling window, warm-up, sustained-low alert, recovery, pause and configurable thresholds. They use fake timestamps, so they need no camera.
+
+To measure FPS on your own machine, run `tools/measure_live.py`. It is a dev-only tool and needs `pip install psutil`.
 
 ---
 
-## Project Structure
+## Implementation notes
 
-```
-Eye_Strain_System/
-├── main.py                  ← Full source (296 lines)
-├── face_landmarker.task     ← MediaPipe model file
-├── dist/
-│   └── main.exe             ← Standalone Windows app
-└── report.pdf               ← Project report
-```
+- **MediaPipe API change.** `mp.solutions` (legacy FaceMesh) is gone in recent MediaPipe releases. The app uses legacy FaceMesh if it exists, otherwise the Tasks `FaceLandmarker` in VIDEO mode. `requirements.txt` asks for `mediapipe>=0.10.30`; tested on 0.10.35, which uses the Tasks path.
+- **Windows startup.** OpenCV's Media Foundation backend can stall for several seconds while it sets up hardware transforms when the webcam opens. `main.py` sets `OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS=0` before importing `cv2`.
+- **Honest FPS.** The HUD's FPS is the number of full loops in the last second (start-to-start), so drawing and display time are included.
+- **Offline and privacy.** Frames are processed in memory and never saved or uploaded. The exe bundles the model and works fully offline (verified with Wi-Fi off). MediaPipe itself may still try to send usage telemetry; offline, that fails silently. The app's own code makes no network requests except the one-time model download in a source checkout.
 
 ---
 
-## Demo
+## Project structure
 
-## https://drive.google.com/file/d/10Yf9vRVdlOZmBLfGuulfcUSph2n3WeCb/view?usp=sharing
+```
+main.py                ← capture, EAR, state machine, calibration, proximity, HUD
+blink_rate.py          ← rolling blinks/min + sustained low-rate alert (pure logic)
+tests/                 ← unit tests for blink_rate.py
+tools/measure_live.py  ← live FPS measurement of the real loop
+main.spec              ← PyInstaller one-file build (bundles the model)
+*.pdf                  ← project reports
+```
 
-## What I Learned
+## Limitations
 
-- MediaPipe's landmark detection pipeline and EAR formula implementation
-- Why fixed thresholds fail in production and how dynamic calibration solves it
-- Noise filtering with state machines in real-time signal processing
-- Handling breaking API changes gracefully with version fallbacks
-- Packaging Python applications as standalone executables
+- EAR thresholds can misfire with strong head turns, glasses glare or low light.
+- Proximity uses face width relative to the frame, so it isn't an absolute distance.
+- Blink accuracy has only been sanity-checked by hand (see above), not evaluated on a labelled dataset.

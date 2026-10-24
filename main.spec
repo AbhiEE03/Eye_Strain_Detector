@@ -6,6 +6,8 @@ binaries = []
 hiddenimports = []
 tmp_ret = collect_all('mediapipe')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+# Bundle the face model so the exe runs offline from any folder (read via sys._MEIPASS).
+datas += [('face_landmarker.task', '.')]
 
 
 a = Analysis(

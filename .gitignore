@@ -30,3 +30,7 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Private interview notes and scratch files (never publish)
+eye-strain-guide.*
+scratchpad/
