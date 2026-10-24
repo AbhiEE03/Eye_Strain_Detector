@@ -6,6 +6,15 @@
 # Run:  python main.py  |  C = calibrate  |  ESC = quit
 # =============================================================================
 
+import os
+import sys
+
+# Windows: OpenCV's default Media Foundation (MSMF) backend sets up hardware
+# transforms when the webcam opens, which can stall startup for several seconds.
+# Must be set before cv2 is imported (mediapipe may import it too).
+if sys.platform == "win32":
+    os.environ.setdefault("OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS", "0")
+
 # To remove the noisy messages
 
 from mediapipe.tasks.python.vision import FaceLandmarker, FaceLandmarkerOptions, RunningMode
@@ -17,8 +26,6 @@ from collections import deque
 import time
 import numpy as np
 import cv2
-import os
-import sys
 from blink_rate import BlinkRateMonitor
 os.environ["GLOG_minloglevel"] = "3"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
